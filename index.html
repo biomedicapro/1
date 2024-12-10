@@ -421,10 +421,10 @@
         <!-- Botones dentro del video -->
         <button class="back-to-menu" id="back-to-menu">🏠</button>
         <div class="video-container-controls">
-            <button id="dark-mode-toggle-video">🌙</button>
-            <button id="instructions-toggle-video">📜</button>
-            <button id="fullscreen-toggle-video">🔳</button>
-            <button id="play-pause-toggle-video">⏸️</button>
+            <button id="dark-mode-toggle-video" title="Modo Oscuro/Claro">🌙</button>
+            <button id="instructions-toggle-video" title="Vocabulario">📜</button>
+            <button id="fullscreen-toggle-video" title="Pantalla Completa">🔳</button>
+            <button id="play-pause-toggle-video" title="Pausar/Reproducir">⏸️</button>
         </div>
         <video id="video-player" controls></video>
         <div id="subtitle-box">
@@ -509,11 +509,6 @@
         let selectionEnd = null;
         let selectedWordsDuringDrag = new Set();
 
-        // Inicializar la aplicación
-        document.addEventListener('DOMContentLoaded', () => {
-            loadVocabFromStorage(); // Cargar vocabulario desde LocalStorage al iniciar
-        });
-
         // Funciones para manejar la persistencia del vocabulario usando LocalStorage
         function saveVocabToStorage() {
             const vocabArray = Array.from(selectedWords);
@@ -530,6 +525,19 @@
                 });
                 updateVocabList();
             }
+        }
+
+        // Función para actualizar la lista de vocabulario
+        function updateVocabList() {
+            // Limpiar la lista actual
+            vocabList.innerHTML = '';
+
+            // Añadir todas las palabras/frases seleccionadas
+            selectedWords.forEach(item => {
+                const li = document.createElement('li');
+                li.textContent = item;
+                vocabList.appendChild(li);
+            });
         }
 
         // Alternar modo oscuro (desde la interfaz de video)
@@ -597,6 +605,9 @@
             // Pausar el video
             videoPlayer.pause();
 
+            // Limpiar progreso del video
+            clearVideoProgress();
+
             // Ocultar el contenedor del video
             videoContainer.style.display = 'none';
 
@@ -628,6 +639,10 @@
                 return;
             }
 
+            // Limpiar cualquier subtítulo anterior
+            subtitleGermanBox.innerHTML = '';
+            subtitleSpanishBox.textContent = '';
+
             // Guardar archivos en LocalStorage como URLs de objetos
             const videoURL = URL.createObjectURL(videoFile);
             videoPlayer.src = videoURL;
@@ -637,7 +652,11 @@
             subtitleGermanReader.onload = function(e) {
                 const srtContent = e.target.result;
                 subtitlesGerman = parseSRT(srtContent);
+                // Renderizar subtítulos en alemán después de parsear
                 renderSubtitlesGerman();
+            };
+            subtitleGermanReader.onerror = function() {
+                alert('Error al leer los subtítulos en Alemán.');
             };
             subtitleGermanReader.readAsText(subtitlesGermanFile);
 
@@ -646,7 +665,11 @@
             subtitleSpanishReader.onload = function(e) {
                 const srtContent = e.target.result;
                 subtitlesSpanish = parseSRT(srtContent);
+                // Renderizar subtítulos en español después de parsear
                 renderSubtitlesSpanish();
+            };
+            subtitleSpanishReader.onerror = function() {
+                alert('Error al leer las explicaciones en Español.');
             };
             subtitleSpanishReader.readAsText(subtitlesSpanishFile);
 
@@ -663,16 +686,31 @@
 
             // Mostrar el botón de volver al menú
             backToMenuButton.style.display = 'flex';
+
+            // Solicitar pantalla completa
+            videoContainer.requestFullscreen().catch(err => {
+                console.error(`Error al entrar en pantalla completa: ${err.message}`);
+            });
+
+            // Actualizar subtítulos y guardar progreso
+            videoPlayer.addEventListener('timeupdate', updateSubtitles);
+            videoPlayer.addEventListener('timeupdate', saveProgress);
+
+            // Cargar progreso si existe
+            videoPlayer.addEventListener('loadedmetadata', loadProgress);
         });
 
         // Renderizar subtítulos en Alemán
         function renderSubtitlesGerman() {
-            updateSubtitles();
+            // Inicialmente, no hay subtítulos visibles
+            subtitleGermanBox.innerHTML = '';
+            lastSubtitleGerman = null;
         }
 
         // Renderizar subtítulos en Español
         function renderSubtitlesSpanish() {
-            updateSubtitles();
+            // Inicialmente, no hay subtítulos visibles
+            subtitleSpanishBox.textContent = '';
         }
 
         // Actualizar subtítulos
@@ -696,8 +734,11 @@
                         return `<span class="clickable-sentence">${clickableWords}.</span>`;
                     }).join(' <br> '); // Separar las frases con saltos de línea
                     subtitleGermanBox.innerHTML = clickableSentences;
+
+                    // Restaurar la selección desde la lista de vocabulario
+                    restoreSelections();
                 } else {
-                    subtitleGermanBox.textContent = '';
+                    subtitleGermanBox.innerHTML = '';
                 }
                 lastSubtitleGerman = currentSubtitleGerman;
             }
@@ -705,11 +746,6 @@
             // Actualizar subtítulos en Español
             subtitleSpanishBox.textContent = currentSubtitleSpanish ? currentSubtitleSpanish.text : '';
         }
-
-        // Guardar progreso en LocalStorage (no se usa IndexedDB para simplificar)
-        videoPlayer.addEventListener('timeupdate', () => {
-            saveProgress();
-        });
 
         // Guardar progreso en LocalStorage
         function saveProgress() {
@@ -722,7 +758,7 @@
             }
         }
 
-        // Recuperar progreso desde LocalStorage
+        // Cargar progreso desde LocalStorage
         function loadProgress() {
             const videoURL = videoPlayer.src;
             if (videoURL) {
@@ -736,16 +772,39 @@
             }
         }
 
-        // Limpiar progreso cuando el video termina
-        videoPlayer.addEventListener('ended', () => {
+        // Limpiar progreso del video
+        function clearVideoProgress() {
             localStorage.removeItem('videoProgress');
-        });
+        }
 
-        // Limpiar progreso cuando el usuario cierra el video
-        window.addEventListener('beforeunload', () => {
-            saveProgress();
-            saveVocabToStorage();
-        });
+        // Parsear archivo SRT con manejo de errores
+        function parseSRT(data) {
+            const regex = /(\d+)\s+(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\s+([\s\S]*?)(?=\n\n|\n*$)/g;
+            let result;
+            const subtitles = [];
+
+            while ((result = regex.exec(data)) !== null) {
+                const start = timeStringToSeconds(result[2]);
+                const end = timeStringToSeconds(result[3]);
+                const text = result[4].replace(/\n/g, ' ').trim();
+                if (text.length > 0) {
+                    subtitles.push({ start, end, text });
+                }
+            }
+            return subtitles;
+        }
+
+        // Convertir tiempo SRT a segundos
+        function timeStringToSeconds(timeString) {
+            const parts = timeString.split(':');
+            const secondsParts = parts[2].split(',');
+            const hours = parseInt(parts[0], 10);
+            const minutes = parseInt(parts[1], 10);
+            const seconds = parseInt(secondsParts[0], 10);
+            const milliseconds = parseInt(secondsParts[1], 10);
+
+            return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+        }
 
         // Manejar clic en palabras/frases de los subtítulos en Alemán
         subtitleGermanBox.addEventListener('click', (event) => {
@@ -879,19 +938,6 @@
             saveVocabToStorage();
         }
 
-        // Función para actualizar la lista de vocabulario
-        function updateVocabList() {
-            // Limpiar la lista actual
-            vocabList.innerHTML = '';
-
-            // Añadir todas las palabras/frases seleccionadas
-            selectedWords.forEach(item => {
-                const li = document.createElement('li');
-                li.textContent = item;
-                vocabList.appendChild(li);
-            });
-        }
-
         // Selección por arrastre
         // Evento de mousedown para iniciar la selección por arrastre
         subtitleGermanBox.addEventListener('mousedown', (event) => {
@@ -959,6 +1005,33 @@
         // Prevenir la selección de texto durante la acción de arrastre
         subtitleGermanBox.addEventListener('dragstart', (event) => {
             event.preventDefault();
+        });
+
+        // Restaurar selecciones desde la lista de vocabulario
+        function restoreSelections() {
+            const wordsInSubtitles = document.querySelectorAll('.clickable-word');
+            wordsInSubtitles.forEach(el => {
+                const word = el.textContent.trim();
+                if (selectedWords.has(word)) {
+                    el.classList.add('selected');
+                }
+            });
+
+            const sentencesInSubtitles = document.querySelectorAll('.clickable-sentence');
+            sentencesInSubtitles.forEach(el => {
+                const sentence = el.innerText.trim();
+                if (selectedWords.has(sentence)) {
+                    el.classList.add('selected');
+                }
+            });
+        }
+
+        // Cargar progreso cuando el video esté listo
+        videoPlayer.addEventListener('loadedmetadata', loadProgress);
+
+        // Restaurar selecciones después de renderizar los subtítulos
+        videoPlayer.addEventListener('timeupdate', () => {
+            restoreSelections();
         });
     </script>
 </body>
