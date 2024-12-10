@@ -510,6 +510,9 @@
         let selectionEnd = null;
         let selectedWordsDuringDrag = new Set();
 
+        // Variable para el nombre del archivo actual
+        let currentFileName = '';
+
         // IndexedDB
         let db;
         const dbName = 'VideoPlayerDB';
@@ -517,7 +520,7 @@
 
         // Inicializar IndexedDB
         function initDB() {
-            const request = indexedDB.open(dbName, 1);
+            const request = indexedDB.open(dbName, 2); // Incrementar versión para incluir 'vocab'
 
             request.onerror = function(event) {
                 console.error('Error al abrir IndexedDB:', event.target.errorCode);
@@ -534,6 +537,7 @@
                     const objectStore = db.createObjectStore(storeName, { keyPath: 'fileName' });
                     objectStore.createIndex('fileName', 'fileName', { unique: true });
                 }
+                // Si la versión se incrementa, puedes añadir más índices o campos si es necesario
             };
         }
 
@@ -546,7 +550,8 @@
                 videoBlob,
                 subtitlesGermanBlob,
                 subtitlesSpanishBlob,
-                currentTime
+                currentTime,
+                vocab: Array.from(vocab) // Inicialmente vacío
             };
             const request = objectStore.put(data);
 
@@ -692,6 +697,26 @@
             vocabSidebar.classList.toggle('visible');
         }
 
+        // Función para guardar el vocabulario en IndexedDB
+        function saveVocab() {
+            if (!currentFileName) return;
+            const transaction = db.transaction([storeName], 'readwrite');
+            const objectStore = transaction.objectStore(storeName);
+            const request = objectStore.get(currentFileName);
+
+            request.onsuccess = function(event) {
+                const data = event.target.result;
+                if (data) {
+                    data.vocab = Array.from(vocab);
+                    objectStore.put(data);
+                }
+            };
+
+            request.onerror = function(event) {
+                console.error('Error al guardar el vocabulario:', event.target.error);
+            };
+        }
+
         // Reproducir video con subtítulos
         playButton.addEventListener('click', () => {
             const videoFile = videoInput.files[0];
@@ -703,7 +728,7 @@
                 return;
             }
 
-            const videoKey = generateVideoKey(videoFile.name);
+            currentFileName = videoFile.name;
 
             // Crear objetos Blob para almacenar en IndexedDB
             const videoBlob = videoFile;
@@ -774,6 +799,23 @@
                         return `<span class="clickable-sentence">${clickableWords}.</span>`;
                     }).join(' <br> '); // Separar las frases con saltos de línea
                     subtitleGermanBox.innerHTML = clickableSentences;
+
+                    // Marcar las palabras/frases que ya están en vocabulario
+                    vocab.forEach(item => {
+                        // Buscar palabras
+                        subtitleGermanBox.querySelectorAll('.clickable-word').forEach(el => {
+                            if (el.textContent.trim() === item) {
+                                el.classList.add('selected');
+                            }
+                        });
+                        // Buscar frases
+                        subtitleGermanBox.querySelectorAll('.clickable-sentence').forEach(el => {
+                            if (el.textContent.trim() === item) {
+                                el.classList.add('selected');
+                            }
+                        });
+                    });
+
                 } else {
                     subtitleGermanBox.textContent = '';
                 }
@@ -786,25 +828,22 @@
 
         // Guardar progreso en IndexedDB
         function saveProgress() {
-            const videoFile = videoInput.files[0];
-            if (videoFile) {
-                const videoKey = generateVideoKey(videoFile.name);
-                const transaction = db.transaction([storeName], 'readwrite');
-                const objectStore = transaction.objectStore(storeName);
-                const request = objectStore.get(videoFile.name);
+            if (!currentFileName) return;
+            const transaction = db.transaction([storeName], 'readwrite');
+            const objectStore = transaction.objectStore(storeName);
+            const request = objectStore.get(currentFileName);
 
-                request.onsuccess = function(event) {
-                    const data = event.target.result;
-                    if (data) {
-                        data.currentTime = videoPlayer.currentTime;
-                        objectStore.put(data);
-                    }
-                };
+            request.onsuccess = function(event) {
+                const data = event.target.result;
+                if (data) {
+                    data.currentTime = videoPlayer.currentTime;
+                    objectStore.put(data);
+                }
+            };
 
-                request.onerror = function(event) {
-                    console.error('Error al guardar el progreso:', event.target.error);
-                };
-            }
+            request.onerror = function(event) {
+                console.error('Error al guardar el progreso:', event.target.error);
+            };
         }
 
         // Parsear archivo SRT
@@ -846,6 +885,7 @@
                     const savedVideo = videos[0]; // Asumimos un video guardado
                     const resume = confirm(`Has visto el video "${savedVideo.fileName}" hasta ${formatTime(savedVideo.currentTime)}. ¿Deseas reanudar desde allí?`);
                     if (resume) {
+                        currentFileName = savedVideo.fileName;
                         // Cargar video desde Blob
                         const videoURL = URL.createObjectURL(savedVideo.videoBlob);
                         videoPlayer.src = videoURL;
@@ -855,6 +895,7 @@
                         subtitleGermanReader.onload = function(e) {
                             const srtContent = e.target.result;
                             subtitlesGerman = parseSRT(srtContent);
+                            updateSubtitles(); // Actualizar subtítulos después de cargar
                         };
                         subtitleGermanReader.readAsText(savedVideo.subtitlesGermanBlob);
 
@@ -863,8 +904,13 @@
                         subtitleSpanishReader.onload = function(e) {
                             const srtContent = e.target.result;
                             subtitlesSpanish = parseSRT(srtContent);
+                            // No es necesario llamar a updateSubtitles aquí ya que se hace en el listener de timeupdate
                         };
                         subtitleSpanishReader.readAsText(savedVideo.subtitlesSpanishBlob);
+
+                        // Restaurar vocabulario
+                        vocab = new Set(savedVideo.vocab || []);
+                        updateVocabList();
 
                         // Mostrar el contenedor del video
                         videoContainer.style.display = 'block';
@@ -904,20 +950,16 @@
 
         // Limpiar progreso cuando el video termina
         videoPlayer.addEventListener('ended', () => {
-            const videoFile = videoInput.files[0];
-            if (videoFile) {
-                deleteVideoData(videoFile.name);
-            }
+            if (!currentFileName) return;
+            deleteVideoData(currentFileName);
             // Ocultar el botón de volver al menú
             backToMenuButton.style.display = 'none';
         });
 
         // Limpiar progreso cuando el usuario cierra el video
         window.addEventListener('beforeunload', () => {
-            const videoFile = videoInput.files[0];
-            if (videoFile) {
-                saveProgress();
-            }
+            if (!currentFileName) return;
+            saveProgress();
         });
 
         // Manejar clic en palabras/frases de los subtítulos en Alemán
@@ -935,16 +977,18 @@
             if (event.target.classList.contains('clickable-sentence') || event.target.classList.contains('clickable-word')) {
                 // Obtener la frase completa
                 let sentenceText = '';
+                let sentenceElement = null;
                 if (event.target.classList.contains('clickable-sentence')) {
                     sentenceText = event.target.innerText.trim();
+                    sentenceElement = event.target;
                 } else if (event.target.classList.contains('clickable-word')) {
                     // Si el doble clic se hizo en una palabra, intentar obtener la frase completa
-                    const sentenceElement = event.target.closest('.clickable-sentence');
+                    sentenceElement = event.target.closest('.clickable-sentence');
                     if (sentenceElement) {
                         sentenceText = sentenceElement.innerText.trim();
                     }
                 }
-                if (sentenceText.length > 0) {
+                if (sentenceText.length > 0 && sentenceElement) {
                     toggleSentenceSelection(sentenceElement, sentenceText);
                 }
             }
@@ -972,6 +1016,9 @@
                         el.classList.remove('selected');
                     }
                 });
+
+                // Guardar el vocabulario actualizado
+                saveVocab();
             }
         });
 
@@ -979,6 +1026,7 @@
         clearVocabButton.addEventListener('click', () => {
             if (confirm('¿Estás seguro de que deseas limpiar toda la lista de vocabulario?')) {
                 selectedWords.clear();
+                vocab.clear();
                 updateVocabList();
                 // Desmarcar todas las palabras y frases en los subtítulos
                 const wordsInSubtitles = document.querySelectorAll('.clickable-word');
@@ -991,6 +1039,9 @@
                 sentencesInSubtitles.forEach(el => {
                     el.classList.remove('selected');
                 });
+
+                // Guardar el vocabulario actualizado
+                saveVocab();
             }
         });
 
@@ -1051,24 +1102,32 @@
         function toggleWordSelection(element, word) {
             if (selectedWords.has(word)) {
                 selectedWords.delete(word);
+                vocab.delete(word);
                 element.classList.remove('selected');
             } else {
                 selectedWords.add(word);
+                vocab.add(word);
                 element.classList.add('selected');
             }
             updateVocabList();
+            // Guardar el vocabulario actualizado
+            saveVocab();
         }
 
         // Función para alternar selección de una frase completa
         function toggleSentenceSelection(element, sentence) {
             if (selectedWords.has(sentence)) {
                 selectedWords.delete(sentence);
+                vocab.delete(sentence);
                 element.classList.remove('selected');
             } else {
                 selectedWords.add(sentence);
+                vocab.add(sentence);
                 element.classList.add('selected');
             }
             updateVocabList();
+            // Guardar el vocabulario actualizado
+            saveVocab();
         }
 
         // Función para actualizar la lista de vocabulario
@@ -1143,6 +1202,8 @@
                 vocab.add(phrase);
                 selectedWords.add(phrase);
                 updateVocabList();
+                // Guardar el vocabulario actualizado
+                saveVocab();
             }
         }
 
