@@ -191,7 +191,6 @@
             box-sizing: border-box;
             z-index: 1001; /* Por encima del video */
             transition: background 0.3s ease, color 0.3s ease;
-            /* Removido pointer-events: none; */
         }
 
         /* Subtítulos en Alemán */
@@ -510,103 +509,27 @@
         let selectionEnd = null;
         let selectedWordsDuringDrag = new Set();
 
-        // IndexedDB
-        let db;
-        const dbName = 'VideoPlayerDB';
-        const storeName = 'videos';
+        // Inicializar la aplicación
+        document.addEventListener('DOMContentLoaded', () => {
+            loadVocabFromStorage(); // Cargar vocabulario desde LocalStorage al iniciar
+        });
 
-        // Inicializar IndexedDB
-        function initDB() {
-            const request = indexedDB.open(dbName, 1);
-
-            request.onerror = function(event) {
-                console.error('Error al abrir IndexedDB:', event.target.errorCode);
-            };
-
-            request.onsuccess = function(event) {
-                db = event.target.result;
-                checkStoredVideo();
-                loadVocabFromStorage(); // Cargar vocabulario desde LocalStorage al iniciar
-            };
-
-            request.onupgradeneeded = function(event) {
-                db = event.target.result;
-                if (!db.objectStoreNames.contains(storeName)) {
-                    const objectStore = db.createObjectStore(storeName, { keyPath: 'fileName' });
-                    objectStore.createIndex('fileName', 'fileName', { unique: true });
-                }
-            };
+        // Funciones para manejar la persistencia del vocabulario usando LocalStorage
+        function saveVocabToStorage() {
+            const vocabArray = Array.from(selectedWords);
+            localStorage.setItem('vocabulario', JSON.stringify(vocabArray));
         }
 
-        // Función para guardar video y subtítulos en IndexedDB
-        function saveVideoData(fileName, videoBlob, subtitlesGermanBlob, subtitlesSpanishBlob, currentTime) {
-            const transaction = db.transaction([storeName], 'readwrite');
-            const objectStore = transaction.objectStore(storeName);
-            const data = {
-                fileName,
-                videoBlob,
-                subtitlesGermanBlob,
-                subtitlesSpanishBlob,
-                currentTime
-            };
-            const request = objectStore.put(data);
-
-            request.onsuccess = function() {
-                console.log('Video y subtítulos guardados correctamente.');
-            };
-
-            request.onerror = function(event) {
-                console.error('Error al guardar los datos:', event.target.error);
-            };
-        }
-
-        // Función para obtener video y subtítulos desde IndexedDB
-        function getVideoData(fileName) {
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([storeName], 'readonly');
-                const objectStore = transaction.objectStore(storeName);
-                const request = objectStore.get(fileName);
-
-                request.onsuccess = function(event) {
-                    resolve(event.target.result);
-                };
-
-                request.onerror = function(event) {
-                    reject(event.target.error);
-                };
-            });
-        }
-
-        // Función para eliminar video y subtítulos desde IndexedDB
-        function deleteVideoData(fileName) {
-            const transaction = db.transaction([storeName], 'readwrite');
-            const objectStore = transaction.objectStore(storeName);
-            const request = objectStore.delete(fileName);
-
-            request.onsuccess = function() {
-                console.log('Datos eliminados correctamente.');
-            };
-
-            request.onerror = function(event) {
-                console.error('Error al eliminar los datos:', event.target.error);
-            };
-        }
-
-        // Generar una clave única basada en el nombre del archivo de video
-        function generateVideoKey(fileName) {
-            return `video-progress-${fileName}`;
-        }
-
-        // Función para formatear el tiempo en formato HH:MM:SS
-        function formatTime(seconds) {
-            const hrs = Math.floor(seconds / 3600);
-            const mins = Math.floor((seconds % 3600) / 60);
-            const secs = Math.floor(seconds % 60);
-            return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
-        }
-
-        function pad(num) {
-            return num.toString().padStart(2, '0');
+        function loadVocabFromStorage() {
+            const vocabString = localStorage.getItem('vocabulario');
+            if (vocabString) {
+                const vocabArray = JSON.parse(vocabString);
+                vocabArray.forEach(item => {
+                    selectedWords.add(item);
+                    vocab.add(item);
+                });
+                updateVocabList();
+            }
         }
 
         // Alternar modo oscuro (desde la interfaz de video)
@@ -705,18 +628,8 @@
                 return;
             }
 
-            const videoKey = generateVideoKey(videoFile.name);
-
-            // Crear objetos Blob para almacenar en IndexedDB
-            const videoBlob = videoFile;
-            const subtitlesGermanBlob = subtitlesGermanFile;
-            const subtitlesSpanishBlob = subtitlesSpanishFile;
-
-            // Guardar archivos en IndexedDB
-            saveVideoData(videoFile.name, videoBlob, subtitlesGermanBlob, subtitlesSpanishBlob, 0);
-
-            // Cargar video
-            const videoURL = URL.createObjectURL(videoBlob);
+            // Guardar archivos en LocalStorage como URLs de objetos
+            const videoURL = URL.createObjectURL(videoFile);
             videoPlayer.src = videoURL;
 
             // Cargar subtítulos en Alemán
@@ -726,7 +639,7 @@
                 subtitlesGerman = parseSRT(srtContent);
                 renderSubtitlesGerman();
             };
-            subtitleGermanReader.readAsText(subtitlesGermanBlob);
+            subtitleGermanReader.readAsText(subtitlesGermanFile);
 
             // Cargar subtítulos en Español
             const subtitleSpanishReader = new FileReader();
@@ -735,7 +648,7 @@
                 subtitlesSpanish = parseSRT(srtContent);
                 renderSubtitlesSpanish();
             };
-            subtitleSpanishReader.readAsText(subtitlesSpanishBlob);
+            subtitleSpanishReader.readAsText(subtitlesSpanishFile);
 
             // Mostrar el contenedor del video
             videoContainer.style.display = 'block';
@@ -750,13 +663,6 @@
 
             // Mostrar el botón de volver al menú
             backToMenuButton.style.display = 'flex';
-
-            // Solicitar pantalla completa
-            videoContainer.requestFullscreen();
-
-            // Actualizar subtítulos y guardar progreso
-            videoPlayer.addEventListener('timeupdate', updateSubtitles);
-            videoPlayer.addEventListener('timeupdate', saveProgress);
         });
 
         // Renderizar subtítulos en Alemán
@@ -800,143 +706,44 @@
             subtitleSpanishBox.textContent = currentSubtitleSpanish ? currentSubtitleSpanish.text : '';
         }
 
-        // Guardar progreso en IndexedDB
+        // Guardar progreso en LocalStorage (no se usa IndexedDB para simplificar)
+        videoPlayer.addEventListener('timeupdate', () => {
+            saveProgress();
+        });
+
+        // Guardar progreso en LocalStorage
         function saveProgress() {
-            const videoFile = videoInput.files[0];
-            if (videoFile) {
-                const videoKey = generateVideoKey(videoFile.name);
-                const transaction = db.transaction([storeName], 'readwrite');
-                const objectStore = transaction.objectStore(storeName);
-                const request = objectStore.get(videoFile.name);
-
-                request.onsuccess = function(event) {
-                    const data = event.target.result;
-                    if (data) {
-                        data.currentTime = videoPlayer.currentTime;
-                        objectStore.put(data);
-                    }
+            const videoURL = videoPlayer.src;
+            if (videoURL) {
+                const progress = {
+                    currentTime: videoPlayer.currentTime
                 };
-
-                request.onerror = function(event) {
-                    console.error('Error al guardar el progreso:', event.target.error);
-                };
+                localStorage.setItem('videoProgress', JSON.stringify(progress));
             }
         }
 
-        // Parsear archivo SRT
-        function parseSRT(data) {
-            const regex = /(\d+)\s+(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\s+([\s\S]*?)(?=\n\n|\n*$)/g;
-            let result;
-            const subtitles = [];
-
-            while ((result = regex.exec(data)) !== null) {
-                const start = timeStringToSeconds(result[2]);
-                const end = timeStringToSeconds(result[3]);
-                const text = result[4].replace(/\n/g, ' ');
-                subtitles.push({ start, end, text });
-            }
-            return subtitles;
-        }
-
-        // Convertir tiempo SRT a segundos
-        function timeStringToSeconds(timeString) {
-            const parts = timeString.split(':');
-            const secondsParts = parts[2].split(',');
-            const hours = parseInt(parts[0], 10);
-            const minutes = parseInt(parts[1], 10);
-            const seconds = parseInt(secondsParts[0], 10);
-            const milliseconds = parseInt(secondsParts[1], 10);
-
-            return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
-        }
-
-        // Verificar si hay un video almacenado y cargarlo automáticamente
-        async function checkStoredVideo() {
-            const transaction = db.transaction([storeName], 'readonly');
-            const objectStore = transaction.objectStore(storeName);
-            const request = objectStore.getAll();
-
-            request.onsuccess = async function(event) {
-                const videos = event.target.result;
-                if (videos.length > 0) {
-                    const savedVideo = videos[0]; // Asumimos un video guardado
-                    const resume = confirm(`Has visto el video "${savedVideo.fileName}" hasta ${formatTime(savedVideo.currentTime)}. ¿Deseas reanudar desde allí?`);
-                    if (resume) {
-                        // Cargar video desde Blob
-                        const videoURL = URL.createObjectURL(savedVideo.videoBlob);
-                        videoPlayer.src = videoURL;
-
-                        // Cargar subtítulos en Alemán desde Blob
-                        const subtitleGermanReader = new FileReader();
-                        subtitleGermanReader.onload = function(e) {
-                            const srtContent = e.target.result;
-                            subtitlesGerman = parseSRT(srtContent);
-                            renderSubtitlesGerman();
-                        };
-                        subtitleGermanReader.readAsText(savedVideo.subtitlesGermanBlob);
-
-                        // Cargar subtítulos en Español desde Blob
-                        const subtitleSpanishReader = new FileReader();
-                        subtitleSpanishReader.onload = function(e) {
-                            const srtContent = e.target.result;
-                            subtitlesSpanish = parseSRT(srtContent);
-                            renderSubtitlesSpanish();
-                        };
-                        subtitleSpanishReader.readAsText(savedVideo.subtitlesSpanishBlob);
-
-                        // Mostrar el contenedor del video
-                        videoContainer.style.display = 'block';
-
-                        // Ocultar la interfaz principal
-                        document.querySelector('.container').style.display = 'none';
-
-                        // Reproducir video y saltar al tiempo guardado
-                        videoPlayer.currentTime = savedVideo.currentTime;
-                        videoPlayer.play();
-                        isPlaying = true;
-                        playPauseToggleVideo.textContent = '⏸️';
-
-                        // Mostrar el botón de volver al menú
-                        backToMenuButton.style.display = 'flex';
-
-                        // Solicitar pantalla completa
-                        videoContainer.requestFullscreen();
-
-                        // Actualizar subtítulos y guardar progreso
-                        videoPlayer.addEventListener('timeupdate', updateSubtitles);
-                        videoPlayer.addEventListener('timeupdate', saveProgress);
-                    } else {
-                        // Si el usuario no desea reanudar, eliminar los datos guardados
-                        deleteVideoData(savedVideo.fileName);
+        // Recuperar progreso desde LocalStorage
+        function loadProgress() {
+            const videoURL = videoPlayer.src;
+            if (videoURL) {
+                const progressString = localStorage.getItem('videoProgress');
+                if (progressString) {
+                    const progress = JSON.parse(progressString);
+                    if (progress.currentTime) {
+                        videoPlayer.currentTime = progress.currentTime;
                     }
                 }
-            };
-
-            request.onerror = function(event) {
-                console.error('Error al obtener datos de IndexedDB:', event.target.error);
-            };
+            }
         }
-
-        // Inicializar IndexedDB al cargar la página
-        window.addEventListener('load', initDB);
 
         // Limpiar progreso cuando el video termina
         videoPlayer.addEventListener('ended', () => {
-            const videoFile = videoInput.files[0];
-            if (videoFile) {
-                deleteVideoData(videoFile.name);
-            }
-            // Ocultar el botón de volver al menú
-            backToMenuButton.style.display = 'none';
+            localStorage.removeItem('videoProgress');
         });
 
         // Limpiar progreso cuando el usuario cierra el video
         window.addEventListener('beforeunload', () => {
-            const videoFile = videoInput.files[0];
-            if (videoFile) {
-                saveProgress();
-            }
-            // Guardar vocabulario en LocalStorage
+            saveProgress();
             saveVocabToStorage();
         });
 
@@ -1153,24 +960,6 @@
         subtitleGermanBox.addEventListener('dragstart', (event) => {
             event.preventDefault();
         });
-
-        // Funciones para manejar la persistencia del vocabulario usando LocalStorage
-        function saveVocabToStorage() {
-            const vocabArray = Array.from(selectedWords);
-            localStorage.setItem('vocabulario', JSON.stringify(vocabArray));
-        }
-
-        function loadVocabFromStorage() {
-            const vocabString = localStorage.getItem('vocabulario');
-            if (vocabString) {
-                const vocabArray = JSON.parse(vocabString);
-                vocabArray.forEach(item => {
-                    selectedWords.add(item);
-                    vocab.add(item);
-                });
-                updateVocabList();
-            }
-        }
     </script>
 </body>
 </html>
